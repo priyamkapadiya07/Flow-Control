@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flow Control Visualization</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+
+    <div class="simulation-container">
+        <header>
+            <h1>Flow Control Mechanisms</h1>
+            <p>Interactive Visualization of Data Link Layer Protocols</p>
+        </header>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="protocol-select">Protocol</label>
+                <select id="protocol-select">
+                    <option value="stop-and-wait">Stop-and-Wait</option>
+                    <option value="sliding-window">Sliding Window</option>
+                    <option value="go-back-n">Go-Back-N</option>
+                    <option value="selective-repeat">Selective Repeat</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label for="frame-count">Total Frames</label>
+                <input type="number" id="frame-count" value="10" min="1" max="20">
+            </div>
+
+            <div class="control-group" id="window-size-group" style="display:none;">
+                <label for="window-size">Window Size</label>
+                <input type="number" id="window-size" value="4" min="1" max="10">
+            </div>
+
+            <div class="control-group">
+                <label>Actions</label>
+                <div class="button-row">
+                    <button id="btn-start" class="btn primary">Start Simulation</button>
+                    <button id="btn-reset" class="btn secondary">Reset</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label for="simulate-loss-input">Simulate Loss (Frame #)</label>
+                <div class="input-row">
+                    <input type="number" id="simulate-loss-input" placeholder="e.g. 3">
+                    <button id="btn-kill" class="btn danger">Set Loss</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="status-panel">
+            <div class="status-item">Current Status: <span id="status-text">Ready</span></div>
+            <div class="status-item">Window: <span id="window-text">N/A</span></div>
+        </div>
+
+        <div class="network-view">
+            <div class="entity sender">
+                <h2>Sender</h2>
+                <div class="queue" id="sender-queue"></div>
+            </div>
+
+            <div class="channel" id="channel">
+                <!-- Packets will animate here -->
+            </div>
+
+            <div class="entity receiver">
+                <h2>Receiver</h2>
+                <div class="queue" id="receiver-queue"></div>
+            </div>
+        </div>
+
+        <div class="log-panel">
+            <h3>Event Log</h3>
+            <ul id="event-log"></ul>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
