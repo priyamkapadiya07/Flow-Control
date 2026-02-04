@@ -2,6 +2,9 @@
 
 A comprehensive academic mini-project implementing Data Link Layer flow control protocols using C and simulating them with a web-based visualization.
 
+![Demo Preview](demo_preview.png)
+
+
 ## 📌 Project Overview
 
 This project demonstrates the working principles of **Flow Control Mechanisms** in Computer Networks. It includes a **Terminal-based C Program** for logic simulation and an **Interactive Web Visualization** to conceptually understand the frame transmission process.
