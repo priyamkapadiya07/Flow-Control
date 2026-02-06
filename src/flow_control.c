@@ -13,7 +13,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h> // For sleep() to simulate delay
+#include <unistd.h>
 
 void stop_and_wait();
 void sliding_window();
@@ -61,8 +61,8 @@ void stop_and_wait() {
         if (i == loss_frame) {
             printf("[Channel] Frame %d LOST! (Simulating Timeout)\n", i);
             printf("[Sender] Timer Expired! Retransmitting Frame %d...\n", i);
-            loss_frame = 0; // Reset loss so retransmission succeeds
-            i--; // Decrement to retry same frame
+            loss_frame = 0;
+            i--;
             continue;
         }
 
@@ -75,8 +75,6 @@ void stop_and_wait() {
 
 /* 
  * SLIDING WINDOW (PURE FLOW CONTROL)
- * - No Error Control (Loss/Retransmission)
- * - Demonstrates Pipelining
  */
 void sliding_window() {
     int frames, w_size, i;
@@ -94,12 +92,10 @@ void sliding_window() {
         }
         printf("]\n");
 
-        // Send all frames in current window
         for (i = 0; i < w_size && (sent + i) < frames; i++) {
             printf("[Sender] Sending Frame %d\n", sent + i + 1);
         }
         
-        // Receive ACKs for all frames in current window (Ideal Channel)
         for (i = 0; i < w_size && (sent + i) < frames; i++) {
              printf("[Receiver] ACK sent for Frame %d\n", sent + i + 1);
         }
@@ -112,14 +108,11 @@ void sliding_window() {
 
 /* 
  * GO-BACK-N (ERROR CONTROL)
- * - Cumulative ACKs
- * - Receiver Discards Out-of-Order
- * - Sender Retransmits Window on Timeout
  */
 void go_back_n() {
     int frames, w_size, loss_frame, i;
-    int sent_base = 1;      // Base of sender's window
-    int next_seq_num = 1;   // Next frame to be sent
+    int sent_base = 1;
+    int next_seq_num = 1;
     
     printf("\n--- GO-BACK-N PROTOCOL ---\n");
     printf("Enter total number of frames: ");
@@ -130,7 +123,6 @@ void go_back_n() {
     scanf("%d", &loss_frame);
 
     while (sent_base <= frames) {
-        // Send frames up to window size
         while (next_seq_num < sent_base + w_size && next_seq_num <= frames) {
             printf("[Sender] Sending Frame %d\n", next_seq_num);
             if (next_seq_num == loss_frame) {
@@ -139,33 +131,22 @@ void go_back_n() {
             next_seq_num++;
         }
 
-        // Check for ACKs
-        // In GBN, we check strictly from base.
-        // If base was lost, we get NO ACKs for subsequent frames (Cumulative ACK rule).
-        
         int ack_received = 0;
         
-        // Simulate Receiver Logic
         for (i = sent_base; i < next_seq_num; i++) {
             if (i == loss_frame) {
                 printf("[Receiver] Expected Frame %d, but content missing (LOST).\n", i);
-                // Receiver discards everything after this point because it expects 'i'
                 printf("[Receiver] Discarding subsequent frames (Out-of-Order). No ACK sent.\n");
                 
-                // Simulate Timeout at Sender
                 printf("[Sender] Timeout! ACK not received for Frame %d.\n", i);
                 printf("[Sender] Go-Back-N: Retransmitting window starting from Frame %d...\n", i);
                 
-                // Reset next_seq_num to base to simulate retransmission
                 next_seq_num = i; 
-                loss_frame = 0; // Clear loss for next try
-                ack_received = 0; // No progress made on base
+                loss_frame = 0;
+                ack_received = 0;
                 break; 
             } else {
                 printf("[Receiver] Frame %d Received. Sending Cumulative ACK %d.\n", i, i);
-                // If we reach here, frame 'i' was successful.
-                // In simulation, we update base immediately for simplicity of loop,
-                // effectively sliding the window as ACKs come in.
                 sent_base++;
                 ack_received = 1;
             }
@@ -176,9 +157,6 @@ void go_back_n() {
 
 /*
  * SELECTIVE REPEAT (ERROR CONTROL)
- * - Individual ACKs
- * - Receiver Buffers Out-of-Order
- * - Sender Retransmits ONLY Lost Frames
  */
 void selective_repeat() {
     int frames, w_size, loss_frame, i;
@@ -208,7 +186,6 @@ void selective_repeat() {
 
         int action_taken = 0;
 
-        // 1. Try to send new frames if window allows
         if (next_seq_num < sent_base + w_size && next_seq_num <= frames) {
             printf("\n[Sender] Sending Frame %d\n", next_seq_num);
             
@@ -226,7 +203,6 @@ void selective_repeat() {
             action_taken = 1;
         }
 
-        // 2. Check if we can slide window
         if (acked[sent_base]) {
             printf("\n[Sender] ACKs received. Window base moves.\n");
             while (sent_base <= frames && acked[sent_base]) {
@@ -235,7 +211,6 @@ void selective_repeat() {
             action_taken = 1;
         }
 
-        // 3. If window is full or all sent, and we are stuck at an unacked base -> Timeout
         if (!action_taken && sent_base <= frames && !acked[sent_base]) {
             printf("\n[Sender] Timeout for Frame %d!\n", sent_base);
             printf("[Sender] Retransmitting ONLY Frame %d.\n", sent_base);
@@ -243,7 +218,6 @@ void selective_repeat() {
             printf("\n[Sender] Sending Frame %d\n", sent_base);
             printf("[Receiver] Frame %d Received.\n", sent_base);
             
-            // Check if we have buffered frames ahead to deliver
             int j = sent_base + 1;
             int buffered = 0;
             while (j <= frames && acked[j]) {
@@ -259,10 +233,6 @@ void selective_repeat() {
             printf("[Receiver] Sending Individual ACK for Frame %d.\n", sent_base);
             acked[sent_base] = 1;
             
-            // Reset loss_frame to prevent infinite loop if the user entered a number 
-            // but logic usually handles it by doing one retransmission here.
-            
-            // Slide immediately after retransmission success
             printf("\n[Sender] Window slides forward.\n");
             while (sent_base <= frames && acked[sent_base]) {
                 sent_base++;
