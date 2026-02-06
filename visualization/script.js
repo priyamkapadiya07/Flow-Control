@@ -121,7 +121,7 @@ function sleep(ms) {
 function createPacket(id, isAck = false) {
     const packet = document.createElement('div');
     packet.className = `packet ${isAck ? 'ack' : ''}`;
-    packet.innerText = isAck ? `ACK ${id}` : `F${id + 1}`;
+    packet.innerText = isAck ? `ACK ${id + 1}` : `F${id + 1}`;
     
     // Initial Position based on screen size
     if (window.innerWidth <= 768) {
@@ -247,251 +247,263 @@ async function runStopAndWait() {
     }
 }
 
-// 2. SLIDING WINDOW PROTOCOL (Fixed Logic: Retransmit ONLY lost frame)
+// 2. SLIDING WINDOW PROTOCOL (PURE FLOW CONTROL - NO LOSS)
 async function runSlidingWindow() {
     let base = 0;
     let nextSeqNum = 0;
-    let pendingAcks = new Array(state.totalFrames).fill(false); // Track individually ACKed frames
     
-    // We need to track what we have sent to manage the "window" visually
-    // But for this logic, we iterate base until done
+    // Logic:
+    // 1. Send up to window size
+    // 2. Receive ACKs
+    // 3. Slide
+    // No retransmission logic here as per requirements.
     
+    if (state.lostFrames.size > 0) {
+        log('Warning: Loss simulation ignored for Pure Sliding Window (Flow Control Only)', 'warning');
+        state.lostFrames.clear();
+    }
+
     while (base < state.totalFrames && state.running) {
         
-        // 1. Send Loop (Fill Window)
+        // Send Phase
         while (nextSeqNum < base + state.windowSize && nextSeqNum < state.totalFrames && state.running) {
-             if (pendingAcks[nextSeqNum]) {
-                 nextSeqNum++; // Skip if already acked (shouldn't happen in simple sequential but safe)
-                 continue;
-             }
-             
              log(`[Sender] Sending Frame ${nextSeqNum + 1}`);
              addToQueue(elements.senderQueue, `Frame ${nextSeqNum + 1}`);
              
-             // Fork the process for this frame
+             // Visual only - assuming ideal channel
              handleFrameSW(nextSeqNum);
              
              nextSeqNum++;
-             await sleep(500); // Small interval between sends
+             await sleep(500); 
         }
         
-        // Wait for sliding
-        // The sliding happens asynchronously in handleFrameSW updates
-        await sleep(100); 
+        // Simple slide check
+        // In this simulation, handleFrameSW is async. 
+        // We wait a bit.
+        await sleep(100);
     }
 
     async function handleFrameSW(seq) {
-        // Create and Move
         const packet = createPacket(seq, false);
-        const isLoss = state.lostFrames.has(seq);
         
-        // If loss, we kill it halfway
-        if (isLoss) {
-            await movePacketWithLoss(packet, seq, true); // this removes packet and resolves false
-            log(`[Channel] Frame ${seq + 1} Lost!`, 'error');
-            state.lostFrames.delete(seq); // Reset loss so next try succeeds
-            
-            // Timeout logic
-            await sleep(SPEED); // Simulate timeout duration
-            log(`[Sender] Timeout for Frame ${seq + 1}. Retransmitting ONLY Frame ${seq + 1}...`, 'warning');
-            
-            // Retransmit THIS frame only
-            // Recursively call handle for this frame
-            // In a real event loop we'd schedule it, here we just invoke
-            if (state.running) handleFrameSW(seq);
-            
-        } else {
-            // Successful arrival
-            const currBase = base; // capture current base for discard check (not needed in SW, accepts all)
-            
-            await movePacketWithLoss(packet, seq, false);
-            packet.remove(); // Remove sender packet from channel
-            
-            log(`[Receiver] Received Frame ${seq + 1}`);
-            addToQueue(elements.receiverQueue, `Frame ${seq + 1}`); // Accepted
-            
-            // Send ACK
-            log(`[Receiver] Sending ACK ${seq + 1}`);
-            const ack = createPacket(seq, true);
-            await animatePacket(ack, true);
-            ack.remove();
-            
-            log(`[Sender] Received ACK ${seq + 1}`);
-            pendingAcks[seq] = true;
-            
-            // Slide Window Logic
-            // Slide base as far as we have consecutive ACKs
-            if (seq === base) {
-                while (pendingAcks[base] && base < state.totalFrames) {
-                    base++;
-                }
-                elements.windowText.innerText = `[${base+1} ... ${Math.min(base+state.windowSize, state.totalFrames)}]`;
-                // Note: outer loop will pick up and send new frames if window opened
-            }
+        // Ideally travel
+        await movePacketWithLoss(packet, seq, false);
+        packet.remove();
+        
+        log(`[Receiver] Received Frame ${seq + 1}`);
+        addToQueue(elements.receiverQueue, `Frame ${seq + 1}`);
+        
+        // ACK
+        log(`[Receiver] Sending ACK ${seq + 1}`);
+        const ack = createPacket(seq, true);
+        await animatePacket(ack, true);
+        ack.remove();
+        
+        log(`[Sender] Received ACK ${seq + 1}`);
+        
+        // Slide Window
+        if (seq >= base) {
+             base = seq + 1; // Simplistic sliding for demo
+             elements.windowText.innerText = `[${base+1} ... ${Math.min(base+state.windowSize, state.totalFrames)}]`;
         }
     }
 }
 
-
-
-// Rewriting GBN to assume proper Pipelining
+// 3. GO-BACK-N (CUMULATIVE ACKS + DISCARD)
 async function runGoBackN() {
     let base = 0;
     let nextSeqNum = 0;
     
-    // We treat this like a persistent loop state
     while (base < state.totalFrames && state.running) {
         
-        // Batch Send: Send everything allowed in the window NOW
-        let framesInFlight = [];
+        let sentCountInFlight = 0;
         
-        let startSeq = nextSeqNum;
-        let endSeq = Math.min(base + state.windowSize, state.totalFrames);
-        
-        for (let i = startSeq; i < endSeq; i++) {
-             log(`[Sender] Sending Frame ${i + 1}`);
-             addToQueue(elements.senderQueue, `Frame ${i + 1}`);
+        // Send Window
+        while (nextSeqNum < base + state.windowSize && nextSeqNum < state.totalFrames && state.running) {
+             log(`[Sender] Sending Frame ${nextSeqNum + 1}`);
+             addToQueue(elements.senderQueue, `Frame ${nextSeqNum + 1}`);
              
-             // Launch packet asynchronously
-             framesInFlight.push(handleFlightGBN(i));
+             handleFlightGBN(nextSeqNum); // Fire and forget (it callbacks global state)
+             
              nextSeqNum++;
-             await sleep(500); // Brief delay between dispatch
+             sentCountInFlight++;
+             await sleep(SPEED / 2); // Stagger sends
         }
         
-        // Wait for this batch to resolve (either ACKs move base, or Timeout resets)
-        // In GBN, if base packet is lost, base doesn't move.
-        // We can check status after a "round trip time"
+        // Wait for potential timeout or window slide
+        await sleep(SPEED + 1000); 
         
-        await Promise.all(framesInFlight);
-        
-        // After flight, check if we need to Go Back
-        // If base didn't move past the start of this batch (and we sent stuff), it means loss occurred.
-        // Actually, handleFlightGBN will update base.
-        
-        if (base < nextSeqNum && base < state.totalFrames) {
-            // If window hasn't advanced to nextSeqNum, we stalled.
-            // Timeout logic is implicitly handled: if base is still `oldBase`, we reset `nextSeqNum` to `base`
-            
-            // To detect "Stall/Timeout", we can check if the expected ACKs arrived.
-            // If we are strictly GBN, we just see: Did base increase?
-            // If we sent frame X (base) and base is still X, then X was lost (or ACK lost).
-            // We simulate Timeout and Go Back.
-            
-            // We need a way to know if "Base" failed.
-            // Let's check: Did we incur any loss in this batch that strictly blocked base?
-            // Simplified: If base < nextSeqNum, we simply reset nextSeqNum = base (Go Back N)
-            // and continue loop.
-            
-            // Only timeout if we are stuck
-            // logic: if (base < nextSeqNum) -> We sent frames ahead of base.
-            // If they were all successful, base would be == nextSeqNum.
-            // If base < nextSeqNum, it means some frames failed or were discarded.
-            
-             log(`[Sender] Window check: Base=${base+1}, Next=${nextSeqNum+1}. Go-Back-N if mismatch.`);
+        // TIMEOUT CHECK
+        // If we sent frames but base didn't move past the start of this batch, assume loss/timeout.
+        // We check if nextSeqNum is ahead of base.
+        if (base < nextSeqNum && state.running) {
+             log(`[Sender] Timeout! No Cumulative ACK for Frame ${base + 1}.`, 'warning');
+             log(`[Sender] Retransmitting Window starting from Frame ${base + 1}...`, 'warning');
              
-             if (base < nextSeqNum) {
-                 log(`[Sender] Timeout! Resending Window from Frame ${base + 1}`, 'warning');
-                 nextSeqNum = base; // THE GO BACK STEP
-             }
+             // Go Back N
+             nextSeqNum = base; 
         }
     }
 
     async function handleFlightGBN(seq) {
-        // 1. Create packet
+        if (!state.running) return;
+
         const packet = createPacket(seq, false);
         const isLoss = state.lostFrames.has(seq);
         
         if (isLoss) {
             await movePacketWithLoss(packet, seq, true);
-            log(`[Channel] Frame ${seq + 1} Lost!`, 'error');
+            log(`[Channel] Frame ${seq + 1} LOST!`, 'error');
             state.lostFrames.delete(seq);
-            return; // No ACK, Base won't move
+            return;
         }
         
-        // 2. Travel
         await movePacketWithLoss(packet, seq, false);
         packet.remove();
         
-        // 3. Receiver Logic
-        // Strict GBN: Only accept if seq == receiver_expected (which tracks base from receiver POV)
-        // But here we share 'base' state for simplicity, or we can assume receiver_expected == base
-        // Wait, in simulation 'base' is sender's view.
-        // WE MUST CHECK IF this frame is the one expected.
-        // Since we process parallel, this check might race. 
-        // We can simply check: Is this frame == base? 
-        // If seq > base, then base was lost (or not ACKed yet).
-        // Since we use global `base` which updates instantly on ACK, we can check `seq == base`.
-        
+        // Receiver Logic
         if (seq === base) {
-             // Correct frame!
-             log(`[Receiver] Accepted Frame ${seq + 1}`);
-             addToQueue(elements.receiverQueue, `Frame ${seq + 1}`);
-             
-             // Send ACK
-             const ack = createPacket(seq, true); // ACK seq+1 typically, or Cumulative ACK seq
-             await animatePacket(ack, true);
-             ack.remove();
-             
-             log(`[Sender] Got ACK ${seq + 1}`);
-             base++; // Move window!
-             elements.windowText.innerText = `[${base+1} ... ${Math.min(base+state.windowSize, state.totalFrames)}]`;
+            log(`[Receiver] Accepted Frame ${seq + 1}`);
+            addToQueue(elements.receiverQueue, `Frame ${seq + 1}`);
+            
+            // Send Cumulative ACK
+            log(`[Receiver] Sending Cumulative ACK ${seq + 1}`);
+            const ack = createPacket(seq, true);
+            ack.innerText = `ACK ${seq + 1}`; // Cumulative label
+            await animatePacket(ack, true);
+            ack.remove();
+            
+            log(`[Sender] Got Cumulative ACK ${seq + 1}`);
+            if (seq === base) { // Double check correctness
+                base++;
+                elements.windowText.innerText = `[${base+1} ... ${Math.min(base+state.windowSize, state.totalFrames)}]`;
+            }
         } else {
-             // Out of order! Discard.
-             log(`[Receiver] Discarding Frame ${seq + 1} (Expected ${base + 1})`, 'error');
-             // No ACK sent.
+            log(`[Receiver] Discarding Frame ${seq + 1} (Expected ${base + 1})`, 'error');
+            // No ACK sent
         }
     }
 }
 
+// 4. SELECTIVE REPEAT (BUFFERING + INDIVIDUAL ACKS)
 async function runSelectiveRepeat() {
-    // Parallel sending logic is hard to visualize linearly, so we do semi-sequential
-    let base = 0;
-    let sentStatus = new Array(state.totalFrames).fill(false); // false: not sent/acked
-    let ackStatus = new Array(state.totalFrames).fill(false);
-
+    let base = 0; // Sender's Base
+    let receiverBase = 0; // Receiver's Expected Sequence Number
+    let nextSeqNum = 0;
+    let acked = new Array(state.totalFrames).fill(false);
+    
+    // We use a separate buffer tracker for receiver to know what it has "buffered"
+    // distinct from what sender knows is "acked"
+    let receivedBuffer = new Array(state.totalFrames).fill(false);
+    
     while (base < state.totalFrames && state.running) {
-        // Send loop
-        for (let i = base; i < Math.min(base + state.windowSize, state.totalFrames); i++) {
-            if (!sentStatus[i]) {
-                sentStatus[i] = true; // Mark as attempted
-                sendFrameSR(i);
-                await sleep(200);
-            }
-        }
-        await sleep(2000); // Wait for flights
         
-        // Slide base
-        while (ackStatus[base] && base < state.totalFrames) {
-            base++;
+        // 1. Send New Frames
+        let actionTaken = false;
+        if (nextSeqNum < base + state.windowSize && nextSeqNum < state.totalFrames) {
+             log(`[Sender] Sending Frame ${nextSeqNum + 1}`);
+             addToQueue(elements.senderQueue, `Frame ${nextSeqNum + 1}`);
+             
+             handleFlightSR(nextSeqNum);
+             
+             nextSeqNum++;
+             actionTaken = true;
+             await sleep(500);
         }
-        elements.windowText.innerText = `[${base+1} ... ${Math.min(base+state.windowSize, state.totalFrames)}]`;
+        
+        // 2. Check Slide (Sender Side)
+        if (acked[base]) {
+            while(base < state.totalFrames && acked[base]) {
+                base++;
+            }
+            log(`[Sender] Window slides to Frame ${base + 1}`);
+            elements.windowText.innerText = `[${base+1} ... ${Math.min(base+state.windowSize, state.totalFrames)}]`;
+            actionTaken = true;
+        }
+        
+        // 3. Timeout Logic
+        // If we can't send (window full or done) AND we can't slide (base unacked), then Timeout Base.
+        if (!actionTaken && base < state.totalFrames && !acked[base]) {
+             // Wait a bit to ensure it's not just in-flight
+             await sleep(SPEED + 500);
+             
+             // Check again
+             if (!acked[base] && state.running) {
+                 log(`[Sender] Timeout for Frame ${base + 1}!`, 'warning');
+                 log(`[Sender] Retransmitting ONLY Frame ${base + 1}`, 'warning');
+                 
+                 // Retransmit specific frame
+                 await handleFlightSR(base);
+             }
+        } else {
+            await sleep(100);
+        }
     }
 
-    async function sendFrameSR(id) {
-        log(`Sender sending Frame ${id + 1}`);
-        addToQueue(elements.senderQueue, `Frame ${id + 1}`);
-        const packet = createPacket(id, false);
-        const isLoss = state.lostFrames.has(id);
+    async function handleFlightSR(seq) {
+        const packet = createPacket(seq, false);
+        const isLoss = state.lostFrames.has(seq);
         
-        // Remove loss flag immediately so retry works
-        if (isLoss) state.lostFrames.delete(id);
-
-        const arrived = await movePacketWithLoss(packet, id, isLoss);
-        packet.remove();
-
-        if (arrived) {
-            log(`Receiver got Frame ${id + 1}`);
-            addToQueue(elements.receiverQueue, `Frame ${id+1}`);
-            
-            const ack = createPacket(id, true);
-            await animatePacket(ack, true);
-            ack.remove();
-            
-            log(`Sender got ACK ${id + 1}`);
-            ackStatus[id] = true;
-        } else {
-             log(`Frame ${id+1} Lost! NAK/Timeout.`, 'error');
-             sentStatus[id] = false; // Mark to resend
+        if (isLoss) {
+            await movePacketWithLoss(packet, seq, true);
+            log(`[Channel] Frame ${seq + 1} LOST!`, 'error');
+            state.lostFrames.delete(seq); 
+            return;
         }
+        
+        await movePacketWithLoss(packet, seq, false);
+        packet.remove();
+        
+        // Receiver Logic
+        log(`[Receiver] Frame ${seq + 1} Received.`);
+        const isDuplicate = receivedBuffer[seq]; // Check before marking
+        receivedBuffer[seq] = true;
+        
+        if (seq === receiverBase) {
+             // Exact expected frame
+             log(`[Receiver] Delivering Frame ${seq + 1}`);
+             addToQueue(elements.receiverQueue, `Frame ${seq + 1}`);
+             receiverBase++;
+             
+             // Check for subsequent buffered frames
+             while(receiverBase < state.totalFrames && receivedBuffer[receiverBase]) {
+                 log(`[Receiver] Delivering Buffered Frame ${receiverBase + 1}`);
+                 
+                 // Remove the visual "Buffered" element if it exists
+                 const buffEl = document.getElementById(`buffered-${receiverBase}`);
+                 if (buffEl) buffEl.remove();
+                 
+                 addToQueue(elements.receiverQueue, `Frame ${receiverBase + 1}`);
+                 receiverBase++;
+             }
+        } else if (seq > receiverBase) {
+             // Out of order
+             if (!isDuplicate) {
+                 log(`[Receiver] Buffering Out-of-Order Frame ${seq + 1}`);
+                 
+                 // Manually add to queue with ID so we can remove it later
+                 const bufDiv = document.createElement('div');
+                 bufDiv.className = 'frame-item'; // Assumed class used by addToQueue
+                 bufDiv.innerText = `Buffered ${seq + 1}`;
+                 bufDiv.id = `buffered-${seq}`;
+                 // Prepend to match addToQueue behavior (newest top)
+                 elements.receiverQueue.prepend(bufDiv);
+             } else {
+                 log(`[Receiver] Duplicate Frame ${seq + 1} (Already Buffered). Ignoring.`);
+             }
+             
+        } else {
+             // Duplicate / Old
+             log(`[Receiver] Duplicate Frame ${seq + 1}. Re-ACKing.`);
+        }
+
+        // Send Individual ACK
+        log(`[Receiver] Sending Individual ACK ${seq + 1}`);
+        const ack = createPacket(seq, true); // createPacket now handles 1-based text
+        await animatePacket(ack, true);
+        ack.remove();
+        
+        log(`[Sender] Got ACK ${seq + 1}`);
+        acked[seq] = true; // Updates sender view
     }
 }
