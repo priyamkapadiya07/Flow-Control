@@ -74,12 +74,14 @@ void stop_and_wait() {
 }
 
 void sliding_window() {
-    int frames, w_size, i;
+    int frames, w_size, i, loss_frame;
     printf("\n--- SLIDING WINDOW PROTOCOL ---\n");
     printf("Enter total number of frames: ");
     scanf("%d", &frames);
     printf("Enter window size: ");
     scanf("%d", &w_size);
+    printf("Enter frame number to simulate loss (0 for none): ");
+    scanf("%d", &loss_frame);
 
     int sent = 0;
     while (sent < frames) {
@@ -89,12 +91,27 @@ void sliding_window() {
         }
         printf("]\n");
 
+        int batch_simulated_loss = 0;
+
         for (i = 0; i < w_size && (sent + i) < frames; i++) {
-            printf("[Sender] Sending Frame %d\n", sent + i + 1);
+            int current_frame = sent + i + 1;
+            printf("[Sender] Sending Frame %d\n", current_frame);
+            
+            if (current_frame == loss_frame) {
+                printf("[Channel] Frame %d LOST!\n", current_frame);
+                batch_simulated_loss = 1;
+                loss_frame = 0; // Reset loss so retransmission succeeds
+            }
         }
         
-        printf("[Receiver] ACK received for Window starting at %d\n", sent + 1);
-        sent += w_size;
+        if (batch_simulated_loss) {
+            printf("[Receiver] Frame Missing! No ACK sent.\n");
+            printf("[Sender] Timer Expired! Retransmitting Window...\n");
+            // Do NOT increment 'sent', so the loop repeats the same window
+        } else {
+            printf("[Receiver] ACK received for Window starting at %d\n", sent + 1);
+            sent += w_size;
+        }
     }
     printf("\n--- Transmission Complete ---\n");
 }
